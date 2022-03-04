@@ -1,22 +1,13 @@
-import numpy as np
+import torch
 
-shape    = (64, 512)
-diag_eps = 1e-8
-a_dtype  = np.float16
-q_dtype  = np.float16
-c_dtype  = np.float32
+def original_orth(A, diag_eps):
+    M, N = A.shape
+    device = A.device
 
-A = np.random.normal(0.0, 1.0, shape).astype(a_dtype)
-M, N = shape
+    R = torch.clone(A)
+    R += torch.eye(M, N, device=device) * diag_eps
 
-def routine(A, original = True):
-    R = A.astype(c_dtype)
-    R += np.eye(M, N, dtype=c_dtype) * diag_eps
-
-    Q = np.eye(M, N, dtype=c_dtype)
-    if original: 
-        Q = np.eye(N, dtype=c_dtype)
-
+    Q = torch.eye(M, N, device=device)
 
     vs = [None for _ in range(M)] #
 
@@ -24,32 +15,22 @@ def routine(A, original = True):
     for i in range(M):
         z = R[i,i:]
         v = -z
-        v[0] -= np.copysign(np.linalg.norm(z), z[0])
-        v /= np.linalg.norm(v)
+        v[0] -= torch.linalg.norm(z) * z[0] / abs(z[0])
+        v /= torch.linalg.norm(v)
 
         for m in range(M):
-            R[m,i:] -= 2.0 * v * np.dot(v, R[m,i:])
+            R[m,i:] -= 2.0 * v * torch.dot(v, R[m,i:])
 
         vs[i] = v #
 
+
     #second kernel
-    for i in range(M): #
-        v = vs[i] #
+    for i in reversed(range(M)): #
+        v = vs[i][None, :] #
+        Q[:, i:] -= 2.0 * (Q[:, i:] @ v.T) @ v
+        # v = vs[i]
+        # for r in range(M):
+        #     Q[r, i:] -= 2.0 * v * np.dot(Q[r, i:], v)
 
-        # for n in range(N):
-        #     Q[n,i:] -= 2.0 * v * np.dot(v, Q[n,i:])
-        
-        Q[:, i:] -= 2.0 * np.outer(Q[:, i:] @ v, v) #equal to above, checked
+    return Q
 
-
-    if original:
-        Q = Q[:,:M].T
-    
-    return Q.astype(q_dtype)
-
-Q1 = routine(A)
-Q2 = routine(A, original=False)
-print(Q1.shape)
-print(Q2.shape)
-print(Q1 == Q2)
-print(np.linalg.norm(Q1 - Q2))
