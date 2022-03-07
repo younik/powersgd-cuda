@@ -36,7 +36,7 @@ def test_orthogonal(M, algo, device):
     Q = A.clone()
     algo(Q, diag_eps=0)
 
-    assert torch.eye(Q.shape[1]).allclose(Q.T @ Q, rtol=1e-03, atol=1e-04)
+    assert torch.eye(Q.shape[1], device=device).allclose(Q.T @ Q, rtol=1e-03, atol=1e-04)
 
 
 @pytest.mark.parametrize("M", matrices)
