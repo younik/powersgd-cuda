@@ -30,7 +30,7 @@ def cuda_v1(A: torch.Tensor, diag_eps: float = 0):
 
     # This algorithm was written to orthogonalize *rows* of A instead of *columns*,
     # so we transpose the matrix first
-    A = A.T
+    A = A.T.contiguous()
 
     Q = torch.empty_like(A)
     _qr_func.qr_orthogonalization(A.clone(), Q, diag_eps)  # type: ignore

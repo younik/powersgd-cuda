@@ -36,7 +36,9 @@ def test_orthogonal(M, algo, device):
     Q = A.clone()
     algo(Q, diag_eps=0)
 
-    assert torch.eye(Q.shape[1], device=device).allclose(Q.T @ Q, rtol=1e-03, atol=1e-04)
+    assert torch.eye(Q.shape[1], device=device).allclose(
+        Q.T @ Q, rtol=1e-03, atol=1e-04
+    )
 
 
 @pytest.mark.parametrize("M", matrices)
@@ -53,3 +55,12 @@ def test_not_worse_than_ref(M, algo, device):
     ref_distance = torch.linalg.norm(A - Q_ref)
 
     assert distance <= ref_distance * 1.05
+
+
+@pytest.mark.parametrize("device", devices)
+@pytest.mark.parametrize("algo", orthogonalization.implementations)
+def test_idempotence(algo, device):
+    A = torch.eye(100, device=device)[:, :10]  # orthogonal matrix
+    Q = A.clone()
+    algo(Q, diag_eps=0)
+    assert Q.allclose(A)
