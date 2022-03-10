@@ -3,3 +3,6 @@ __pycache__/test_orthogonalization.cpython-38-pytest-7.0.1.pyc
 torch-1.10.0a0+git71f889c-cp39-cp39-linux_x86_64.whl
 __pycache__/algo.cpython-38.pyc
 Dockerfile
+.vscode/c_cpp_properties.json
+.vscode/settings.json
+__pycache__/algo.cpython-38.pyc

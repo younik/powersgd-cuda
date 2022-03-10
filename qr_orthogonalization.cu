@@ -5,48 +5,45 @@
 
 using semaphore = cuda::std::counting_semaphore<>;
 
-const int M = 8;
-const int N = 1024;
 
-
-__global__ 
-void reflections(float *R, float *vs, semaphore *sems){
+template <int N, typename scalar_t> 
+__global__ void reflections(scalar_t *R, scalar_t *vs, int m, semaphore *sems){ //vs still double precision?
     int tx = threadIdx.x;
     int bx = blockIdx.x;
     int m_pos = bx * N + tx;
-    typedef cub::BlockReduce<float, N, cub::BLOCK_REDUCE_RAKING_COMMUTATIVE_ONLY> BlockReduce;
+    typedef cub::BlockReduce<scalar_t, N, cub::BLOCK_REDUCE_RAKING_COMMUTATIVE_ONLY> BlockReduce;
     __shared__ typename BlockReduce::TempStorage temp_storage;
 
     if(tx == 0)
-        sems[bx * M + bx].acquire(); //warp accessing simultanuosly? not good
+        sems[bx * m + bx].acquire(); //warp accessing simultanuosly? not good
     __syncthreads();
 
     vs[m_pos] = - (tx >= bx) * R[m_pos]; //try vs[m_pos] in shared mem and push in global at the end
 
-    float z_sq = pow(vs[m_pos], 2);
-    float norm_z_sq = BlockReduce(temp_storage).Sum(z_sq);
+    scalar_t z_sq = pow(vs[m_pos], 2);
+    scalar_t norm_z_sq = BlockReduce(temp_storage).Sum(z_sq);
     if(tx == bx)
         vs[m_pos] -= copysign(sqrt(norm_z_sq), R[m_pos]);
 
-    float v_sq = pow(vs[m_pos], 2); 
-    float norm_v_sq = BlockReduce(temp_storage).Sum(v_sq);
-    __shared__ float norm_v;
+    scalar_t v_sq = pow(vs[m_pos], 2); 
+    scalar_t norm_v_sq = BlockReduce(temp_storage).Sum(v_sq);
+    __shared__ scalar_t norm_v;
     if(tx == 0)
         norm_v = sqrt(norm_v_sq);
     __syncthreads();
 
     vs[m_pos] /= norm_v;
 
-    for(int m = 0; m < M; ++m){ //dynamic parallelsim and avoid this loop?
+    for(int m = 0; m < m; ++m){ //dynamic parallelsim and avoid this loop?
         if(m > bx){
             if(tx == 0)
-                sems[bx * M + m].acquire();   
+                sems[bx * m + m].acquire();   
             __syncthreads();
         }     
 
-        float prod = R[m * N + tx] * vs[m_pos];
-        float reduce = BlockReduce(temp_storage).Sum(prod);
-        __shared__ float dot;
+        scalar_t prod = R[m * N + tx] * vs[m_pos];
+        scalar_t reduce = BlockReduce(temp_storage).Sum(prod);
+        __shared__ scalar_t dot;
         if(tx == 0)
            dot = reduce;
         __syncthreads();
@@ -56,21 +53,21 @@ void reflections(float *R, float *vs, semaphore *sems){
         //if(m > bx){
         __syncthreads();
         if (tx == 0)
-            sems[(bx + 1) * M + m].release(); //possible also with if(tx==0) .release(N)
+            sems[(bx + 1) * m + m].release(); //possible also with if(tx==0) .release(N)
         //}
     }
 }
 
-__global__ 
-void Q_loop(float *Q, float *vs, int col){
+template <int N, typename scalar_t> 
+__global__  void Q_loop(scalar_t *Q, scalar_t *vs, int col){
     int tx = threadIdx.x;
     int bx = blockIdx.x;
-    typedef cub::BlockReduce<float, N, cub::BLOCK_REDUCE_RAKING_COMMUTATIVE_ONLY> BlockReduce;
+    typedef cub::BlockReduce<scalar_t, N, cub::BLOCK_REDUCE_RAKING_COMMUTATIVE_ONLY> BlockReduce;
     __shared__ typename BlockReduce::TempStorage temp_storage;
 
-    float prod = vs[col * N + tx] * Q[bx * N + tx];
-    float reduce = BlockReduce(temp_storage).Sum(prod);
-    __shared__ float dot;
+    scalar_t prod = vs[col * N + tx] * Q[bx * N + tx];
+    scalar_t reduce = BlockReduce(temp_storage).Sum(prod);
+    __shared__ scalar_t dot;
     if(tx == 0)
        dot = reduce;
     __syncthreads();
@@ -78,53 +75,51 @@ void Q_loop(float *Q, float *vs, int col){
     Q[bx * N + tx] -= 2.0 * vs[col * N + tx] * dot;
 }
 
-__global__
-void Q_init(float *Q){
+template <typename scalar_t> 
+__global__ void add_diag(scalar_t *A, int n, scalar_t value){
     int tx = threadIdx.x;
-    int bx = blockIdx.x;
-
-    Q[bx * N + tx] = (bx == tx);
+    A[tx * n + tx] += value;
 }
 
-__global__
-void add_eps_diag(float *R, int N, float epsilon){
-    int tx = threadIdx.x;
-    R[tx * N + tx] += epsilon;
-}
 
-void qr_orthogonalization_cuda(torch::Tensor A, torch::Tensor Q, int M, int N, float epsilon){
-    float *R, *vs; //device
+template <typename scalar_t> 
+void dispatched_implementation(torch::Tensor A, torch::Tensor Q, int m, const int n, float epsilon){
+    scalar_t *vs; //device
+    scalar_t eps = (scalar_t) epsilon;
     
-    R = A.data<float>();
-    add_eps_diag<<<1, M>>>(R, N, epsilon);
-    cudaMalloc(&vs, M*N*sizeof(float));
+    add_diag<scalar_t><<<1, m>>>(A.data<scalar_t>(), n, eps);
+    cudaMalloc(&vs, m*n*sizeof(scalar_t));
 
     semaphore *sems;
-    cudaMalloc(&sems, M*(M+1)*sizeof(semaphore));
-    for(int i=0; i<M; ++i){ //init on device?
-        semaphore sem_h(N);
+    cudaMalloc(&sems, m*(m+1)*sizeof(semaphore));
+    for(int i=0; i<m; ++i){ //init on device?
+        semaphore sem_h(1);
         cudaMemcpyAsync(&sems[i], &sem_h, sizeof(semaphore), cudaMemcpyHostToDevice);
     }
-    for(int i=M; i<M*(M+1); ++i){
+    for(int i=m; i<m*(m+1); ++i){
         semaphore sem_h(0);
         cudaMemcpyAsync(&sems[i], &sem_h, sizeof(semaphore), cudaMemcpyHostToDevice);
     }
 
     cudaDeviceSynchronize();
 
-    //for(int i=0; i<M; ++i)
-    reflections<<<M, N>>>(R, vs, sems);
+    reflections<1024, scalar_t><<<m, n>>>(A.data<scalar_t>(), vs, m, sems);
     
-    // // cudaDeviceSynchronize();
-    Q_init<<<M, N>>>(Q.data<float>()); //TODO: float change with template
-    //try memset
-    // //cudaDeviceSynchronize();
+    cudaMemset(Q.data<scalar_t>(), 0, m * n * sizeof(scalar_t));
+    add_diag<scalar_t><<<1, m>>>(Q.data<scalar_t>(), n, 1);
+    cudaDeviceSynchronize();
 
-    for(int col = M - 1; col >= 0; --col){
-        Q_loop<<<M, N>>>(Q.data<float>(), vs, col);
-        //cudaDeviceSynchronize();
+    for(int col = m - 1; col >= 0; --col){
+        Q_loop<1024, scalar_t><<<m, n>>>(Q.data<scalar_t>(), vs, col);
+        cudaDeviceSynchronize();
     }
 
     cudaFree(sems);
     cudaFree(vs);
+}
+
+void qr_orthogonalization_cuda(torch::Tensor A, torch::Tensor Q, int m, int n, float epsilon){
+    AT_DISPATCH_FLOATING_TYPES(A.scalar_type(), "lltm_forward_cuda", ([&] {
+        dispatched_implementation<scalar_t>(A, Q, m, n, epsilon);
+    }));
 }
