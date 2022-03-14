@@ -50,11 +50,11 @@ __global__ void reflections(scalar_t *R, scalar_t *vs, int m, semaphore *sems){ 
 
         R[m * N + tx] -= 2.0 * vs[m_pos] * dot;
 
-        //if(m > bx){
-        __syncthreads();
-        if (tx == 0)
-            sems[(bx + 1) * m + row].release(); //possible also with if(tx==0) .release(N)
-        //}
+        if(row > bx){
+            __syncthreads();
+            if (tx == 0)
+                sems[(bx + 1) * m + row].release();
+        }
     }
 }
 
@@ -83,7 +83,7 @@ __global__ void add_diag(scalar_t *A, int n, scalar_t value){
 
 
 template <typename scalar_t> 
-void dispatched_implementation(torch::Tensor A, torch::Tensor Q, int m, const int n, float epsilon){
+void dispatched_implementation(torch::Tensor A, torch::Tensor Q, int m, int n, float epsilon){
     scalar_t *vs; //device
     scalar_t eps = (scalar_t) epsilon;
     
