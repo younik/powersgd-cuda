@@ -15,7 +15,7 @@ __global__ void reflections(scalar_t *R, scalar_t *vs, int m, semaphore *sems){ 
     __shared__ typename BlockReduce::TempStorage temp_storage;
 
     if(tx == 0)
-        sems[bx * m + bx].acquire(); //warp accessing simultanuosly? not good
+        sems[bx * m + bx].acquire();
     __syncthreads();
 
     vs[m_pos] = - (tx >= bx) * R[m_pos]; //try vs[m_pos] in shared mem and push in global at the end
@@ -34,14 +34,14 @@ __global__ void reflections(scalar_t *R, scalar_t *vs, int m, semaphore *sems){ 
 
     vs[m_pos] /= norm_v;
 
-    for(int m = 0; m < m; ++m){ //dynamic parallelsim and avoid this loop?
-        if(m > bx){
+    for(int row = 0; row < m; ++row){ //dynamic parallelsim and avoid this loop?
+        if(row > bx){
             if(tx == 0)
-                sems[bx * m + m].acquire();   
+                sems[bx * m + row].acquire();   
             __syncthreads();
         }     
 
-        scalar_t prod = R[m * N + tx] * vs[m_pos];
+        scalar_t prod = R[row * N + tx] * vs[m_pos];
         scalar_t reduce = BlockReduce(temp_storage).Sum(prod);
         __shared__ scalar_t dot;
         if(tx == 0)
@@ -53,7 +53,7 @@ __global__ void reflections(scalar_t *R, scalar_t *vs, int m, semaphore *sems){ 
         //if(m > bx){
         __syncthreads();
         if (tx == 0)
-            sems[(bx + 1) * m + m].release(); //possible also with if(tx==0) .release(N)
+            sems[(bx + 1) * m + row].release(); //possible also with if(tx==0) .release(N)
         //}
     }
 }
@@ -102,7 +102,6 @@ void dispatched_implementation(torch::Tensor A, torch::Tensor Q, int m, const in
     }
 
     cudaDeviceSynchronize();
-
     reflections<1024, scalar_t><<<m, n>>>(A.data<scalar_t>(), vs, m, sems);
     
     cudaMemset(Q.data<scalar_t>(), 0, m * n * sizeof(scalar_t));
@@ -119,7 +118,7 @@ void dispatched_implementation(torch::Tensor A, torch::Tensor Q, int m, const in
 }
 
 void qr_orthogonalization_cuda(torch::Tensor A, torch::Tensor Q, int m, int n, float epsilon){
-    AT_DISPATCH_FLOATING_TYPES(A.scalar_type(), "lltm_forward_cuda", ([&] {
+    AT_DISPATCH_FLOATING_TYPES(A.scalar_type(), "qr_orthogonalization_cuda", ([&] {
         dispatched_implementation<scalar_t>(A, Q, m, n, epsilon);
     }));
 }
