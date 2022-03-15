@@ -6,11 +6,13 @@ import orthogonalization
 torch.manual_seed(0)
 
 devices = ["cpu", "cuda"] if torch.cuda.is_available() else ["cpu"]
+shapes = [(100, 3), (10, 10)]
+dtypes = [torch.float64, torch.float32, torch.float16]
 
-matrices = [
-    torch.randn([100, 3]),
-    torch.randn([10, 10]),
-]
+matrices = [torch.randn(shape, dtype=dtype) 
+            for shape in shapes 
+            for dtype in dtypes
+            ]
 
 
 @pytest.mark.parametrize("M", matrices)

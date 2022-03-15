@@ -87,7 +87,7 @@ __global__ void add_diag(scalar_t *A, int n, scalar_t value){
 
 
 template <typename scalar_t> 
-void dispatched_implementation(torch::Tensor A, torch::Tensor Q, int m, const int n, float epsilon){
+void dispatched_implementation(torch::Tensor A, torch::Tensor Q, int m, int n, float epsilon){
     scalar_t *vs; //device
     scalar_t eps = (scalar_t) epsilon;
     
@@ -123,7 +123,8 @@ void dispatched_implementation(torch::Tensor A, torch::Tensor Q, int m, const in
 }
 
 void qr_orthogonalization_cuda(torch::Tensor A, torch::Tensor Q, int m, int n, float epsilon){
-    AT_DISPATCH_FLOATING_TYPES(A.scalar_type(), "qr_orthogonalization_cuda", ([&] {
+    AT_DISPATCH_FLOATING_TYPES_AND2(at::ScalarType::Half, at::ScalarType::BFloat16,
+    A.scalar_type(), "qr_orthogonalization_cuda", ([&] {
         dispatched_implementation<scalar_t>(A, Q, m, n, epsilon);
     }));
 }
