@@ -6,3 +6,4 @@ Dockerfile
 .vscode/c_cpp_properties.json
 .vscode/settings.json
 __pycache__/algo.cpython-38.pyc
+runai.yml
