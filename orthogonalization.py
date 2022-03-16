@@ -17,10 +17,10 @@ def pytorch(A: torch.Tensor, diag_eps: float = 0):
     Assumes A has more rows than columns
     """
     assert diag_eps == 0
-    A.data = torch.linalg.qr(A).Q
+    A.data = torch.qr(A).Q
 
 
-def cuda_v1(A: torch.Tensor, diag_eps: float = 0):
+def cuda_v1(M: torch.Tensor, diag_eps: float = 0):
     """
     Orthogonalize the columns of A using Omar's custom CUDA op
     Assumes A has more rows than columns.
@@ -30,11 +30,12 @@ def cuda_v1(A: torch.Tensor, diag_eps: float = 0):
 
     # This algorithm was written to orthogonalize *rows* of A instead of *columns*,
     # so we transpose the matrix first
+    A = M.clone()
     A = A.T.contiguous()
 
     Q = torch.empty_like(A)
     _qr_func.qr_orthogonalization(A.clone(), Q, diag_eps)  # type: ignore
-    A.data = Q.T
+    M.data = Q.T
 
 
 def householder_manual(A: torch.Tensor, diag_eps: float = 0):
@@ -49,7 +50,7 @@ def householder_manual(A: torch.Tensor, diag_eps: float = 0):
     for k in range(n):
         z = r[k:, k : (k + 1)]
         v = -z
-        v[0] -= torch.linalg.norm(z) * torch.sign(z[0])
+        v[0] -= torch.linalg.norm(z) * torch.sign(z[0]) 
         v /= torch.linalg.norm(v)
         r[k:, k:].addmm_(v, v.T @ r[k:, k:], alpha=-2)
         q[k:].addmm_(v, v.T @ q[k:], alpha=-2)
@@ -94,4 +95,4 @@ def torch_orgqr(A: torch.Tensor, diag_eps: float = 0):
     A.data = torch.orgqr(*torch.geqrf(A))
 
 
-implementations = [pytorch, cuda_v1, householder_manual, torch_powersgd, torch_orgqr]
+implementations = [cuda_v1, pytorch, householder_manual, torch_powersgd] #, torch_orgqr]

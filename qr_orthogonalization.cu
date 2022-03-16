@@ -4,7 +4,7 @@
 #include <torch/extension.h>
 
 using semaphore = cuda::std::counting_semaphore<>;
-const int BLOCK_THREADS = 256;
+const int BLOCK_THREADS = 512;
 
 
 template <int BLOCK_THREADS, typename scalar_t> 
@@ -21,7 +21,7 @@ __device__  scalar_t dot(scalar_t *a, scalar_t *b, int length, int tx){
         int idx = i * BLOCK_THREADS + tx;
         scalar_t prod = 0;
         if(idx < length) prod = a[idx] * b[idx];
-        scalar_t reduce = BlockReduce(temp_storage).Sum(prod); //not all thread calls when length not power of 2, ok?
+        scalar_t reduce = BlockReduce(temp_storage).Sum(prod);
 
         if(tx == 0) dot += reduce;
         __syncthreads();
@@ -136,14 +136,3 @@ void qr_orthogonalization_cuda(torch::Tensor A, torch::Tensor Q, int m, int n, f
         dispatched_implementation<scalar_t>(A, Q, m, n, epsilon);
     }));
 }
-
-
-// int main(){
-//     int M = 8;
-//     int N = 1024;
-
-//     torch::Tensor A = torch::randn({M, N});
-//     torch::Tensor Q = torch::zeros({M, N});
-
-//     qr_orthogonalization_cuda(A, Q, M, N, 0);
-// }
