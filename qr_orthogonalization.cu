@@ -4,6 +4,7 @@
 #include <torch/extension.h>
 
 using semaphore = cuda::std::counting_semaphore<>;
+const int BLOCK_THREADS = 256;
 
 
 template <int BLOCK_THREADS, typename scalar_t> 
@@ -48,8 +49,6 @@ __global__ void reflections(scalar_t *R, scalar_t *vs, int m, int n, semaphore *
     scalar_t norm_v_sq = dot<BLOCK_THREADS, scalar_t>(v, v, v_len, tx);
     if(tx == 0) v[0] += copysign(sqrt(norm_v_sq), v[0]);
     
-    __syncthreads();
-
     scalar_t norm_v = sqrt(dot<BLOCK_THREADS, scalar_t>(v, v, v_len, tx));
     for(int idx = tx; idx < v_len; idx += BLOCK_THREADS)
         v[idx] /= norm_v;
@@ -116,14 +115,14 @@ void dispatched_implementation(torch::Tensor A, torch::Tensor Q, int m, int n, f
 
     cudaDeviceSynchronize();
 
-    reflections<1024, scalar_t><<<m, n>>>(A.data<scalar_t>(), vs, m, n, sems);
+    reflections<BLOCK_THREADS, scalar_t><<<m, BLOCK_THREADS>>>(A.data<scalar_t>(), vs, m, n, sems);
     
     cudaMemset(Q.data<scalar_t>(), 0, m * n * sizeof(scalar_t));
     add_diag<scalar_t><<<1, m>>>(Q.data<scalar_t>(), n, 1);
     cudaDeviceSynchronize();
 
     for(int col = m - 1; col >= 0; --col){
-        Q_loop<1024, scalar_t><<<m, n>>>(Q.data<scalar_t>(), vs, n, col);
+        Q_loop<BLOCK_THREADS, scalar_t><<<m, BLOCK_THREADS>>>(Q.data<scalar_t>(), vs, n, col);
         cudaDeviceSynchronize();
     }
 
@@ -137,3 +136,14 @@ void qr_orthogonalization_cuda(torch::Tensor A, torch::Tensor Q, int m, int n, f
         dispatched_implementation<scalar_t>(A, Q, m, n, epsilon);
     }));
 }
+
+
+// int main(){
+//     int M = 8;
+//     int N = 1024;
+
+//     torch::Tensor A = torch::randn({M, N});
+//     torch::Tensor Q = torch::zeros({M, N});
+
+//     qr_orthogonalization_cuda(A, Q, M, N, 0);
+// }
