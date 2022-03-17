@@ -20,7 +20,7 @@ __device__  scalar_t dot(scalar_t *a, scalar_t *b, int length, int tx){
         int idx = i * BLOCK_THREADS + tx;
         scalar_t prod = 0;
         if(idx < length) prod = a[idx] * b[idx];
-        scalar_t reduce = BlockReduce(temp_storage).Sum(prod);
+        scalar_t reduce = BlockReduce(temp_storage).Sum(prod); //add reduce only till
 
         if(tx == 0) dot += reduce;
         __syncthreads();
@@ -93,6 +93,14 @@ __global__ void add_diag(scalar_t *A, int n, scalar_t value){
     A[tx * n + tx] += value;
 }
 
+__global__ 
+void init_sems(semaphore *sems, int m){
+    int tx = threadIdx.x;
+    int bx = blockIdx.x;
+
+    new (&sems[bx * m + tx]) semaphore (bx == 0);
+}
+
 __global__
 void release_sems(semaphore *sems){
     sems[threadIdx.x].release();
@@ -101,36 +109,29 @@ void release_sems(semaphore *sems){
 template <typename scalar_t> 
 void dispatched_implementation(torch::Tensor A, torch::Tensor Q, int m, int n, float epsilon){
     semaphore *sems;
-    cudaMalloc(&sems, m * (m + 1) * sizeof(semaphore));
-    for(int i=0; i<m; ++i){ //init on device?
-        semaphore sem_h(1);
-        cudaMemcpyAsync(&sems[i], &sem_h, sizeof(semaphore), cudaMemcpyHostToDevice);
-    }
-    for(int i=m; i<m*(m+1); ++i){
-        semaphore sem_h(0);
-        cudaMemcpyAsync(&sems[i], &sem_h, sizeof(semaphore), cudaMemcpyHostToDevice);
-    }
-
-    scalar_t eps = (scalar_t) epsilon;
-    add_diag<scalar_t><<<1, m>>>(A.data<scalar_t>(), n, eps);
+    cudaMalloc((void**)&sems, (m + 1) * m * sizeof(semaphore));
+    init_sems<<<m + 1, m>>>(sems, m);
     
     scalar_t *vs;
     cudaMalloc(&vs, m * n * sizeof(scalar_t));
     cudaMemsetAsync(vs, 0, m * n * sizeof(scalar_t));
+
+    scalar_t eps = (scalar_t) epsilon;
+    add_diag<scalar_t><<<1, m>>>(A.data<scalar_t>(), n, eps);
 
     cudaDeviceSynchronize();
 
     reflections<BLOCK_THREADS, scalar_t><<<m, BLOCK_THREADS>>>(A.data<scalar_t>(), vs, m, n, sems);
     
     release_sems<<<1, m>>>(&sems[m*m]);
-    add_diag<scalar_t><<<1, m>>>(Q.data<scalar_t>(), n, 1);
     cudaMemset(Q.data<scalar_t>(), 0, m * n * sizeof(scalar_t));
+    add_diag<scalar_t><<<1, m>>>(Q.data<scalar_t>(), n, 1);
+    
     cudaDeviceSynchronize();
 
     dim3 blockDim = dim3(m, m);
     Q_loop<BLOCK_THREADS, scalar_t><<<blockDim, BLOCK_THREADS>>>(Q.data<scalar_t>(), vs, n, m, sems);
     cudaDeviceSynchronize();
-
 
     cudaFree(sems);
     cudaFree(vs);
