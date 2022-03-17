@@ -6,7 +6,7 @@ using semaphore = cuda::std::counting_semaphore<>;
 const int BLOCK_THREADS = 512;
 
 
-template <int BLOCK_THREADS, typename scalar_t> 
+template <int BLOCK_THREADS, typename scalar_t>
 __device__  scalar_t dot(scalar_t *a, scalar_t *b, int length, int tx){
     typedef cub::BlockReduce<scalar_t, BLOCK_THREADS, cub::BLOCK_REDUCE_RAKING_COMMUTATIVE_ONLY> BlockReduce;
     __shared__ typename BlockReduce::TempStorage temp_storage;
@@ -20,7 +20,14 @@ __device__  scalar_t dot(scalar_t *a, scalar_t *b, int length, int tx){
         int idx = i * BLOCK_THREADS + tx;
         scalar_t prod = 0;
         if(idx < length) prod = a[idx] * b[idx];
-        scalar_t reduce = BlockReduce(temp_storage).Sum(prod); //add reduce only till
+        scalar_t reduce;
+
+        if(i == loop_times - 1){
+            int till = length - i * BLOCK_THREADS
+            reduce = BlockReduce(temp_storage).Reduce(prod, cub::Sum(), till); 
+        }
+        else
+            reduce = BlockReduce(temp_storage).Sum(prod);
 
         if(tx == 0) dot += reduce;
         __syncthreads();
@@ -72,7 +79,7 @@ template <int BLOCK_THREADS, typename scalar_t>
 __global__  void Q_loop(scalar_t *Q, scalar_t *vs, int n, int m, semaphore *sems){
     int tx = threadIdx.x;
     int bx = blockIdx.x;
-    int v_idx = blockIdx.y;
+    int v_idx = m - blockIdx.y - 1;
     scalar_t *v = &vs[v_idx * n];
 
     if(tx==0) sems[(v_idx + 1) * m + bx].acquire();
