@@ -21,7 +21,7 @@ __device__  scalar_t dot(scalar_t *a, scalar_t *b, int length, int tx){
         scalar_t prod = 0;
         if(idx < length) prod = a[idx] * b[idx];
         
-        reduce scalar_t reduce = BlockReduce(temp_storage).Sum(prod);
+        scalar_t reduce = BlockReduce(temp_storage).Sum(prod);
 
         if(tx == 0) dot += reduce;
         __syncthreads();
@@ -108,7 +108,7 @@ void release_sems(semaphore *sems){
 }
 
 template <typename scalar_t> 
-void dispatched_implementation(torch::Tensor A, torch::Tensor Q, int m, int n, float epsilon){
+void dispatched_implementation(torch::Tensor A, int m, int n, float epsilon){
     semaphore *sems;
     cudaMalloc((void**)&sems, (m + 1) * m * sizeof(semaphore));
     init_sems<<<m + 1, m>>>(sems, m);
@@ -121,26 +121,26 @@ void dispatched_implementation(torch::Tensor A, torch::Tensor Q, int m, int n, f
     add_diag<scalar_t><<<1, m>>>(A.data<scalar_t>(), n, eps);
 
     cudaDeviceSynchronize();
-
     reflections<BLOCK_THREADS, scalar_t><<<m, BLOCK_THREADS>>>(A.data<scalar_t>(), vs, m, n, sems);
-    
+    cudaDeviceSynchronize();
+
     release_sems<<<1, m>>>(&sems[m*m]);
-    cudaMemset(Q.data<scalar_t>(), 0, m * n * sizeof(scalar_t));
-    add_diag<scalar_t><<<1, m>>>(Q.data<scalar_t>(), n, 1);
+    cudaMemset(A.data<scalar_t>(), 0, m * n * sizeof(scalar_t));
+    add_diag<scalar_t><<<1, m>>>(A.data<scalar_t>(), n, 1);
     
     cudaDeviceSynchronize();
 
     dim3 blockDim = dim3(m, m);
-    Q_loop<BLOCK_THREADS, scalar_t><<<blockDim, BLOCK_THREADS>>>(Q.data<scalar_t>(), vs, n, m, sems);
+    Q_loop<BLOCK_THREADS, scalar_t><<<blockDim, BLOCK_THREADS>>>(A.data<scalar_t>(), vs, n, m, sems);
     cudaDeviceSynchronize();
 
     cudaFree(sems);
     cudaFree(vs);
 }
 
-void qr_orthogonalization_cuda(torch::Tensor A, torch::Tensor Q, int m, int n, float epsilon){
+void qr_orthogonalization_cuda(torch::Tensor A, int m, int n, float epsilon){
     AT_DISPATCH_FLOATING_TYPES_AND2(at::ScalarType::Half, at::ScalarType::BFloat16,
     A.scalar_type(), "qr_orthogonalization_cuda", ([&] {
-        dispatched_implementation<scalar_t>(A, Q, m, n, epsilon);
+        dispatched_implementation<scalar_t>(A, m, n, epsilon);
     }));
 }
