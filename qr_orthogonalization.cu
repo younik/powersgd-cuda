@@ -20,14 +20,8 @@ __device__  scalar_t dot(scalar_t *a, scalar_t *b, int length, int tx){
         int idx = i * BLOCK_THREADS + tx;
         scalar_t prod = 0;
         if(idx < length) prod = a[idx] * b[idx];
-        scalar_t reduce;
-
-        if(i == loop_times - 1){
-            int till = length - i * BLOCK_THREADS
-            reduce = BlockReduce(temp_storage).Reduce(prod, cub::Sum(), till); 
-        }
-        else
-            reduce = BlockReduce(temp_storage).Sum(prod);
+        
+        reduce scalar_t reduce = BlockReduce(temp_storage).Sum(prod);
 
         if(tx == 0) dot += reduce;
         __syncthreads();
