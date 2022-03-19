@@ -150,7 +150,7 @@ void dispatchedImplementation(torch::Tensor A, int m, int n, float epsilon){
     releaseSems<<<1, m>>>(&sems[m*m]);
     cudaMemset(A.data<scalar_t>(), 0, m * n * sizeof(scalar_t));
     addDiag<scalar_t><<<1, m>>>(A.data<scalar_t>(), 1, n, 1);
-    
+    A.as_strided_({m, n}, {n, 1});
     cudaDeviceSynchronize();
 
     dim3 blockDim = dim3(m, m);
