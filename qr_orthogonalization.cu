@@ -87,12 +87,6 @@ __global__  void QLoop(scalar_t *Q, scalar_t *vs, int n, int m, semaphore *sems)
     if(tx==0) sems[vIdx  * m + bx].release();
 }
 
-template <typename scalar_t> 
-__global__ void addDiagonal(scalar_t *A, int n, scalar_t value){
-    int tx = threadIdx.x;
-    A[tx * n + tx] += value;
-}
-
 __global__ 
 void initSems(semaphore *sems, int m){
     int tx = threadIdx.x;
@@ -113,17 +107,16 @@ void dispatchedImplementation(torch::Tensor A, int m, int n, float epsilon){
     initSems<<<m + 1, m>>>(sems, m);
     
     torch::Tensor vs = torch::zeros_like(A);
-
-    addDiagonal<scalar_t><<<1, m>>>(A.data<scalar_t>(), n, (scalar_t) epsilon);
-
+    A.diagonal().add_((scalar_t) epsilon);
+    
     cudaDeviceSynchronize();
     reflections<BLOCK_THREADS, scalar_t><<<m, BLOCK_THREADS>>>(A.data<scalar_t>(), vs.data<scalar_t>(), m, n, sems);
     cudaDeviceSynchronize();
 
     releaseSems<<<1, m>>>(&sems[m*m]);
     cudaMemset(A.data<scalar_t>(), 0, m * n * sizeof(scalar_t));
-    addDiagonal<scalar_t><<<1, m>>>(A.data<scalar_t>(), n, 1);
-    
+    A.fill_diagonal_(1);
+
     cudaDeviceSynchronize();
 
     dim3 blockDim = dim3(m, m);
