@@ -18,9 +18,8 @@ __device__  scalar_t dot(scalar_t *a, scalar_t *b, int length, int tx){
 
     for(int i = 0; i < loopTimes; ++i){
         int idx = i * BLOCK_THREADS + tx;
-        scalar_t prod = 0;
-        if(idx < length) prod = a[idx] * b[idx];
-        
+
+        scalar_t prod = (idx < length)? a[idx] * b[idx] : (scalar_t) 0;
         scalar_t reduce = BlockReduce(tmpStorage).Sum(prod);
 
         if(tx == 0) dot += reduce;
@@ -113,14 +112,12 @@ void dispatchedImplementation(torch::Tensor A, int m, int n, float epsilon){
     cudaMalloc((void**)&sems, (m + 1) * m * sizeof(semaphore));
     initSems<<<m + 1, m>>>(sems, m);
     
-    scalar_t *vs;
-    cudaMalloc(&vs, m * n * sizeof(scalar_t));
-    cudaMemsetAsync(vs, 0, m * n * sizeof(scalar_t));
+    torch::Tensor vs = torch::zeros_like(A);
 
     addDiagonal<scalar_t><<<1, m>>>(A.data<scalar_t>(), n, (scalar_t) epsilon);
 
     cudaDeviceSynchronize();
-    reflections<BLOCK_THREADS, scalar_t><<<m, BLOCK_THREADS>>>(A.data<scalar_t>(), vs, m, n, sems);
+    reflections<BLOCK_THREADS, scalar_t><<<m, BLOCK_THREADS>>>(A.data<scalar_t>(), vs.data<scalar_t>(), m, n, sems);
     cudaDeviceSynchronize();
 
     releaseSems<<<1, m>>>(&sems[m*m]);
@@ -130,11 +127,10 @@ void dispatchedImplementation(torch::Tensor A, int m, int n, float epsilon){
     cudaDeviceSynchronize();
 
     dim3 blockDim = dim3(m, m);
-    QLoop<BLOCK_THREADS, scalar_t><<<blockDim, BLOCK_THREADS>>>(A.data<scalar_t>(), vs, n, m, sems);
+    QLoop<BLOCK_THREADS, scalar_t><<<blockDim, BLOCK_THREADS>>>(A.data<scalar_t>(), vs.data<scalar_t>(), n, m, sems);
     cudaDeviceSynchronize();
 
     cudaFree(sems);
-    cudaFree(vs);
 }
 
 void qrOrthogonalizationCuda(torch::Tensor A, int m, int n, float epsilon){
