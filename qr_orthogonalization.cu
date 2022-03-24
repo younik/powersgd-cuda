@@ -50,21 +50,17 @@ __global__ void reflections(scalar_t *R, scalar_t *vs, int m, int n, semaphore *
     for(int idx = tx; idx < vLen; idx += BLOCK_THREADS)
         v[idx] /= normV;
 
-    for(int row = 0; row < m; ++row){ //dynamic parallelsim and avoid this loop?
-        if(row > bx){
-            if(tx == 0) sems[bx * m + row].acquire();   
-            __syncthreads();
-        }     
-
+    for(int row = bx + 1; row < m; ++row){ //dynamic parallelsim and avoid this loop?
+        if(tx == 0) sems[bx * m + row].acquire();   
+        __syncthreads();
+        
         scalar_t dotValue = dot<BLOCK_THREADS, scalar_t>(&R[row * n + bx], v, vLen, tx);
         
         for(int idx = tx; idx < vLen; idx += BLOCK_THREADS)
             R[row * n + bx + idx] -= 2.0 * v[idx] * dotValue;
 
-        if(row > bx){
-            __syncthreads();
-            if (tx == 0) sems[(bx + 1) * m + row].release();
-        }
+        __syncthreads();
+        if (tx == 0) sems[(bx + 1) * m + row].release();
     }
 }
 
