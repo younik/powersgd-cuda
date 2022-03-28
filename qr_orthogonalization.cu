@@ -1,6 +1,7 @@
 #include <cub/cub.cuh>
 #include <cuda/std/semaphore>
 #include <torch/extension.h>
+#include <ATen/cuda/CUDAContext.h>
 
 using semaphore = cuda::std::counting_semaphore<>;
 const int BLOCK_THREADS = 512;
@@ -90,24 +91,20 @@ void initSems(semaphore *sems, int m){
 
 template <typename scalar_t> 
 void dispatchedImplementation(torch::Tensor A, int m, int n, float epsilon){
+    cudaStream_t stream = at::cuda::getCurrentCUDAStream();
+
     semaphore *sems;
     cudaMalloc((void**)&sems, (m + 1) * m * sizeof(semaphore));
-    initSems<<<m + 1, m>>>(sems, m);
+    initSems<<<m + 1, m, 0, stream>>>(sems, m);
     
     torch::Tensor vs = torch::zeros_like(A);
     A.diagonal().add_((scalar_t) epsilon);
     
-    cudaDeviceSynchronize();
-    reflections<BLOCK_THREADS, scalar_t><<<m, BLOCK_THREADS>>>(A.data<scalar_t>(), vs.data<scalar_t>(), m, n, sems);
-    cudaDeviceSynchronize();
+    reflections<BLOCK_THREADS, scalar_t><<<m, BLOCK_THREADS, 0, stream>>>(A.data<scalar_t>(), vs.data<scalar_t>(), m, n, sems);
 
     cudaMemset(A.data<scalar_t>(), 0, m * n * sizeof(scalar_t));
     A.fill_diagonal_(1);
-
-    cudaDeviceSynchronize();
-
-    QLoop<BLOCK_THREADS, scalar_t><<<m, BLOCK_THREADS>>>(A.data<scalar_t>(), vs.data<scalar_t>(), n, m);
-    cudaDeviceSynchronize();
+    QLoop<BLOCK_THREADS, scalar_t><<<m, BLOCK_THREADS, 0, stream>>>(A.data<scalar_t>(), vs.data<scalar_t>(), n, m);
 
     cudaFree(sems);
 }
