@@ -46,14 +46,23 @@ __device__  __forceinline__ scalar_t dot(scalar_t *a, scalar_t *b, int length, i
 }
 
 template <int BLOCK_THREADS, typename scalar_t> 
-__global__ void reflections(scalar_t *R, scalar_t *vs, int m, int n, int *counter){
+__global__ void reflections(scalar_t *R, scalar_t *vs, int m, int n, int *barrier){
     int tx = threadIdx.x;
     int bx = blockIdx.x;
-    int vLen = n - bx;
+
+    for(int row = 0; row < bx; ++row){
+        wait_counter(barrier, row);
+
+        scalar_t *v = &vs[row * n + row];
+        int vLen = n - row;
+        scalar_t dotValue = dot<BLOCK_THREADS, scalar_t>(&R[bx * n + row], v, vLen, tx);
+        
+        for(int idx = tx; idx < vLen; idx += BLOCK_THREADS)
+            R[bx * n + row + idx] -= 2.0 * v[idx] * dotValue;
+    }
+
     scalar_t *v = &vs[bx * n + bx];
-
-    wait_counter(counter, bx);
-
+    int vLen = n - bx;
     for(int idx = tx; idx < vLen; idx += BLOCK_THREADS)
         v[idx] = - R[bx * n + bx + idx];
 
@@ -64,14 +73,8 @@ __global__ void reflections(scalar_t *R, scalar_t *vs, int m, int n, int *counte
     for(int idx = tx; idx < vLen; idx += BLOCK_THREADS)
         v[idx] /= normV;
 
-    for(int row = bx + 1; row < m; ++row){
-        scalar_t dotValue = dot<BLOCK_THREADS, scalar_t>(&R[row * n + bx], v, vLen, tx);
-        
-        for(int idx = tx; idx < vLen; idx += BLOCK_THREADS)
-            R[row * n + bx + idx] -= 2.0 * v[idx] * dotValue;
-    }
-
-    *counter = bx + 1;
+    if(tx == 0)
+        *barrier = bx;
 }
 
 template <int BLOCK_THREADS, typename scalar_t> 
@@ -102,21 +105,17 @@ template <typename scalar_t>
 void dispatchedImplementation(torch::Tensor A, int m, int n, float epsilon){
     cudaStream_t stream = at::cuda::getCurrentCUDAStream();
 
-    int *counter;
-    cudaMalloc(&counter, sizeof(int));
-    cudaMemset(counter, 0, sizeof(int));
-    //initSems<<<m + 1, m, 0, stream>>>(sems, m);
+    auto options = torch::TensorOptions().dtype(torch::kInt32).device(A.device());
+    torch::Tensor barrier = torch::zeros({1}, options);
     
     torch::Tensor vs = torch::zeros_like(A);
     A.diagonal().add_((scalar_t) epsilon);
     
-    reflections<BLOCK_THREADS, scalar_t><<<m, BLOCK_THREADS, 0, stream>>>(A.data<scalar_t>(), vs.data<scalar_t>(), m, n, counter);
+    reflections<BLOCK_THREADS, scalar_t><<<m, BLOCK_THREADS, 0, stream>>>(A.data<scalar_t>(), vs.data<scalar_t>(), m, n, barrier.data<int>());
 
     A.fill_(0);
     A.fill_diagonal_(1);
     QLoop<BLOCK_THREADS, scalar_t><<<m, BLOCK_THREADS, 0, stream>>>(A.data<scalar_t>(), vs.data<scalar_t>(), n, m);
-
-    //cudaFree(sems);
 }
 
 void qrOrthogonalizationCuda(torch::Tensor A, int m, int n, float epsilon){
