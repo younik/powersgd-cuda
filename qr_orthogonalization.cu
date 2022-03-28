@@ -3,8 +3,23 @@
 #include <torch/extension.h>
 #include <ATen/cuda/CUDAContext.h>
 
+
 using semaphore = cuda::std::counting_semaphore<>;
 const int BLOCK_THREADS = 512;
+
+
+__device__ __forceinline__ void wait_counter(int* counter, int target)
+{
+    if (threadIdx.x == 0)
+    {
+        int cnt;
+        do {
+            asm volatile ("ld.relaxed.gpu.global.s32 %0, [%1];" : "=r"(cnt): "l"(counter) );
+        }
+        while (cnt < target);
+    }
+    __syncthreads();
+}
 
 
 template <int BLOCK_THREADS, typename scalar_t>
@@ -31,15 +46,13 @@ __device__  __forceinline__ scalar_t dot(scalar_t *a, scalar_t *b, int length, i
 }
 
 template <int BLOCK_THREADS, typename scalar_t> 
-__global__ void reflections(scalar_t *R, scalar_t *vs, int m, int n, semaphore *sems){ //vs always float precision?
+__global__ void reflections(scalar_t *R, scalar_t *vs, int m, int n, int *counter){
     int tx = threadIdx.x;
     int bx = blockIdx.x;
     int vLen = n - bx;
     scalar_t *v = &vs[bx * n + bx];
 
-    if(tx == 0)
-        sems[bx * m + bx].acquire();
-    __syncthreads();
+    wait_counter(counter, bx);
 
     for(int idx = tx; idx < vLen; idx += BLOCK_THREADS)
         v[idx] = - R[bx * n + bx + idx];
@@ -52,17 +65,13 @@ __global__ void reflections(scalar_t *R, scalar_t *vs, int m, int n, semaphore *
         v[idx] /= normV;
 
     for(int row = bx + 1; row < m; ++row){
-        if(tx == 0) sems[bx * m + row].acquire();   
-        __syncthreads();
-        
         scalar_t dotValue = dot<BLOCK_THREADS, scalar_t>(&R[row * n + bx], v, vLen, tx);
         
         for(int idx = tx; idx < vLen; idx += BLOCK_THREADS)
             R[row * n + bx + idx] -= 2.0 * v[idx] * dotValue;
-
-        __syncthreads();
-        if (tx == 0) sems[(bx + 1) * m + row].release();
     }
+
+    *counter = bx + 1;
 }
 
 template <int BLOCK_THREADS, typename scalar_t> 
@@ -93,20 +102,21 @@ template <typename scalar_t>
 void dispatchedImplementation(torch::Tensor A, int m, int n, float epsilon){
     cudaStream_t stream = at::cuda::getCurrentCUDAStream();
 
-    semaphore *sems;
-    cudaMalloc((void**)&sems, (m + 1) * m * sizeof(semaphore));
-    initSems<<<m + 1, m, 0, stream>>>(sems, m);
+    int *counter;
+    cudaMalloc(&counter, sizeof(int));
+    cudaMemset(counter, 0, sizeof(int));
+    //initSems<<<m + 1, m, 0, stream>>>(sems, m);
     
     torch::Tensor vs = torch::zeros_like(A);
     A.diagonal().add_((scalar_t) epsilon);
     
-    reflections<BLOCK_THREADS, scalar_t><<<m, BLOCK_THREADS, 0, stream>>>(A.data<scalar_t>(), vs.data<scalar_t>(), m, n, sems);
+    reflections<BLOCK_THREADS, scalar_t><<<m, BLOCK_THREADS, 0, stream>>>(A.data<scalar_t>(), vs.data<scalar_t>(), m, n, counter);
 
-    cudaMemset(A.data<scalar_t>(), 0, m * n * sizeof(scalar_t));
+    A.fill_(0);
     A.fill_diagonal_(1);
     QLoop<BLOCK_THREADS, scalar_t><<<m, BLOCK_THREADS, 0, stream>>>(A.data<scalar_t>(), vs.data<scalar_t>(), n, m);
 
-    cudaFree(sems);
+    //cudaFree(sems);
 }
 
 void qrOrthogonalizationCuda(torch::Tensor A, int m, int n, float epsilon){
