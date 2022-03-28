@@ -7,24 +7,24 @@ const int BLOCK_THREADS = 512;
 
 
 template <int BLOCK_THREADS, typename scalar_t>
-__device__  scalar_t dot(scalar_t *a, scalar_t *b, int length, int tx){
+__device__  __forceinline__ scalar_t dot(scalar_t *a, scalar_t *b, int length, int tx){
     typedef cub::BlockReduce<scalar_t, BLOCK_THREADS, cub::BLOCK_REDUCE_RAKING_COMMUTATIVE_ONLY> BlockReduce;
     __shared__ typename BlockReduce::TempStorage tmpStorage;
 
-    int loopTimes = ceil((float)length / (float)BLOCK_THREADS);
-    __shared__ scalar_t dot;
-    if(tx == 0) dot = 0;
-    __syncthreads();
+    uint unroll = ceil((float)length / (float)BLOCK_THREADS);
+    uint idx = (tx & -32u)*unroll + (tx & 31);
 
-    for(int i = 0; i < loopTimes; ++i){
-        int idx = i * BLOCK_THREADS + tx;
-
-        scalar_t prod = (idx < length)? a[idx] * b[idx] : (scalar_t) 0;
-        scalar_t reduce = BlockReduce(tmpStorage).Sum(prod);
-
-        if(tx == 0) dot += reduce;
-        __syncthreads();
+    scalar_t localProd = 0;
+    for(int i = 0; i < unroll; ++i){
+        localProd += (idx < length)? a[idx] * b[idx] : (scalar_t) 0;
+        idx += 32;
     }
+
+    __shared__ scalar_t dot;
+    scalar_t reduce = BlockReduce(tmpStorage).Sum(localProd);
+
+    if(tx == 0) dot = reduce;
+    __syncthreads();
 
     return dot;
 }
@@ -70,12 +70,13 @@ __global__  void QLoop(scalar_t *Q, scalar_t *vs, int n, int m){
     int bx = blockIdx.x;
 
     for(int vIdx = 0; vIdx < m; ++vIdx){
-        scalar_t *v = &vs[vIdx * n];
+        scalar_t *v = &vs[vIdx * n + vIdx];
+        uint vLen = n - vIdx;
     
-        scalar_t dotValue = dot<BLOCK_THREADS, scalar_t>(v, &Q[bx * n], n, tx);
+        scalar_t dotValue = dot<BLOCK_THREADS, scalar_t>(v, &Q[bx * n + vIdx], vLen, tx);
 
-        for(int idx = tx; idx < n; idx += BLOCK_THREADS)
-            Q[bx * n + idx] -= 2.0 * v[idx] * dotValue;
+        for(int idx = tx; idx < vLen ; idx += BLOCK_THREADS)
+            Q[bx * n + vIdx + idx] -= 2.0 * v[idx] * dotValue;
     }
 }
 
