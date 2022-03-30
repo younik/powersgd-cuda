@@ -17,7 +17,7 @@ __device__ __forceinline__ void wait_barrier(int* barrier, int target){
 }
 
 template <int BLOCK_THREADS, typename scalar_t>
-__device__  __forceinline__ scalar_t dot(scalar_t *a, scalar_t *b, int length, int tx){
+__device__  __forceinline__ scalar_t dot(scalar_t *a, scalar_t *b, uint length, int tx){
     typedef cub::BlockReduce<scalar_t, BLOCK_THREADS, cub::BLOCK_REDUCE_RAKING_COMMUTATIVE_ONLY> BlockReduce;
     __shared__ typename BlockReduce::TempStorage tmpStorage;
 
@@ -49,16 +49,16 @@ __global__ void reflections(scalar_t *R, scalar_t *vs, int m, int n, int *barrie
         wait_barrier(barrier, row);
 
         scalar_t *v = &vs[row * n + row];
-        int vLen = n - row;
+        uint vLen = n - row;
         scalar_t dotValue = dot<BLOCK_THREADS, scalar_t>(&R[bx * n + row], v, vLen, tx);
         
-        for (int idx = tx; idx < vLen; idx += BLOCK_THREADS)
+        for (uint idx = tx; idx < vLen; idx += BLOCK_THREADS)
             R[bx * n + row + idx] -= 2.0 * v[idx] * dotValue;
     }
 
     scalar_t *v = &vs[bx * n + bx];
     int vLen = n - bx;
-    for (int idx = tx; idx < vLen; idx += BLOCK_THREADS)
+    for (uint idx = tx; idx < vLen; idx += BLOCK_THREADS)
         v[idx] = - R[bx * n + bx + idx];
 
     scalar_t normVSq = dot<BLOCK_THREADS, scalar_t>(v, v, vLen, tx);
@@ -66,7 +66,7 @@ __global__ void reflections(scalar_t *R, scalar_t *vs, int m, int n, int *barrie
         v[0] += copysign(sqrt(normVSq), v[0]);
     
     scalar_t normV = sqrt(dot<BLOCK_THREADS, scalar_t>(v, v, vLen, tx));
-    for (int idx = tx; idx < vLen; idx += BLOCK_THREADS)
+    for (uint idx = tx; idx < vLen; idx += BLOCK_THREADS)
         v[idx] /= normV;
 
     __syncthreads();
@@ -86,7 +86,7 @@ __global__  void QLoop(scalar_t *Q, scalar_t *vs, int n, int m){
     
         scalar_t dotValue = dot<BLOCK_THREADS, scalar_t>(v, &Q[bx * n + vIdx], vLen, tx);
 
-        for (int idx = tx; idx < vLen ; idx += BLOCK_THREADS)
+        for (uint idx = tx; idx < vLen ; idx += BLOCK_THREADS)
             Q[bx * n + vIdx + idx] -= 2.0 * v[idx] * dotValue;
     }
 }
