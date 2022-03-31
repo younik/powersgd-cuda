@@ -1,9 +1,6 @@
 #include <cub/cub.cuh>
-#include <cuda/std/semaphore>
 #include <torch/extension.h>
 #include <ATen/cuda/CUDAContext.h>
-
-using semaphore = cuda::std::counting_semaphore<>;
 
 __device__ __forceinline__ void wait_barrier(int* barrier, int target){
     if (threadIdx.x == 0){
@@ -46,23 +43,14 @@ __device__  __forceinline__ scalar_t dot(scalar_t *a, scalar_t *b, uint length, 
 }
 
 template <int BLOCK_THREADS, typename scalar_t> 
-__global__ void reflections(scalar_t *R, scalar_t *vs, int m, int n, int *barrier){
+__global__ void reflections(scalar_t *R, scalar_t *vs, int m, int n, int *barriers){
     int tx = threadIdx.x;
     int bx = blockIdx.x;
-
-    for (int vIdx = 0; vIdx < bx; ++vIdx){
-        wait_barrier(barrier, vIdx);
-
-        scalar_t *v = &vs[vIdx * n + vIdx];
-        uint vLen = n - vIdx;
-        scalar_t dotValue = dot<BLOCK_THREADS, scalar_t>(&R[bx * n + vIdx], v, vLen, tx);
-        
-        for (uint idx = tx; idx < vLen; idx += BLOCK_THREADS)
-            R[bx * n + vIdx + idx] -= 2.0 * v[idx] * dotValue;
-    }
-
     scalar_t *v = &vs[bx * n + bx];
     int vLen = n - bx;
+
+    wait_barrier(&barriers[bx], bx);
+
     for (uint idx = tx; idx < vLen; idx += BLOCK_THREADS)
         v[idx] = - R[bx * n + bx + idx];
 
@@ -74,8 +62,17 @@ __global__ void reflections(scalar_t *R, scalar_t *vs, int m, int n, int *barrie
     for (uint idx = tx; idx < vLen; idx += BLOCK_THREADS)
         v[idx] /= normV;
 
-    __syncthreads();
-    set_barrier(barrier, bx);
+    for (int row = bx + 1; row < m; ++row){
+        wait_barrier(&barriers[row], bx);
+
+        scalar_t dotValue = dot<BLOCK_THREADS, scalar_t>(&R[row * n + bx], v, vLen, tx);
+        
+        for (uint idx = tx; idx < vLen; idx += BLOCK_THREADS)
+            R[row * n + bx + idx] -= 2.0 * v[idx] * dotValue;
+
+        __syncthreads();
+        set_barrier(&barriers[row], bx + 1);
+    }
 }
 
 template <int BLOCK_THREADS, typename scalar_t> 
@@ -99,12 +96,12 @@ void qrMain(torch::Tensor A, int m, int n, float epsilon){
     cudaStream_t stream = at::cuda::getCurrentCUDAStream();
 
     auto options = torch::TensorOptions().dtype(torch::kInt32).device(A.device());
-    torch::Tensor barrier = torch::zeros({1}, options);
+    torch::Tensor barriers = torch::zeros({m}, options);
     
     torch::Tensor vs = torch::zeros_like(A);
     A.diagonal().add_((scalar_t) epsilon);
     
-    reflections<BLOCK_THREADS, scalar_t><<<m, BLOCK_THREADS, 0, stream>>>(A.data<scalar_t>(), vs.data<scalar_t>(), m, n, barrier.data<int>());
+    reflections<BLOCK_THREADS, scalar_t><<<m, BLOCK_THREADS, 0, stream>>>(A.data<scalar_t>(), vs.data<scalar_t>(), m, n, barriers.data<int>());
 
     A.fill_(0);
     A.fill_diagonal_(1);
