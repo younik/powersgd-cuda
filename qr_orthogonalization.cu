@@ -16,6 +16,11 @@ __device__ __forceinline__ void wait_barrier(int* barrier, int target){
     __syncthreads();
 }
 
+__device__ __forceinline__ void set_barrier(int* barrier, int value){
+    if(threadIdx.x == 0)
+        asm volatile ("st.global.cg.s32 [%0], %1;" :: "l"(barrier), "r"(value));
+}
+
 template <int BLOCK_THREADS, typename scalar_t>
 __device__  __forceinline__ scalar_t dot(scalar_t *a, scalar_t *b, uint length, int tx){
     typedef cub::BlockReduce<scalar_t, BLOCK_THREADS, cub::BLOCK_REDUCE_RAKING_COMMUTATIVE_ONLY> BlockReduce;
@@ -45,15 +50,15 @@ __global__ void reflections(scalar_t *R, scalar_t *vs, int m, int n, int *barrie
     int tx = threadIdx.x;
     int bx = blockIdx.x;
 
-    for (int row = 0; row < bx; ++row){
-        wait_barrier(barrier, row);
+    for (int vIdx = 0; vIdx < bx; ++vIdx){
+        wait_barrier(barrier, vIdx);
 
-        scalar_t *v = &vs[row * n + row];
-        uint vLen = n - row;
-        scalar_t dotValue = dot<BLOCK_THREADS, scalar_t>(&R[bx * n + row], v, vLen, tx);
+        scalar_t *v = &vs[vIdx * n + vIdx];
+        uint vLen = n - vIdx;
+        scalar_t dotValue = dot<BLOCK_THREADS, scalar_t>(&R[bx * n + vIdx], v, vLen, tx);
         
         for (uint idx = tx; idx < vLen; idx += BLOCK_THREADS)
-            R[bx * n + row + idx] -= 2.0 * v[idx] * dotValue;
+            R[bx * n + vIdx + idx] -= 2.0 * v[idx] * dotValue;
     }
 
     scalar_t *v = &vs[bx * n + bx];
@@ -70,9 +75,7 @@ __global__ void reflections(scalar_t *R, scalar_t *vs, int m, int n, int *barrie
         v[idx] /= normV;
 
     __syncthreads();
-    if(tx == 0)
-        asm volatile ("st.global.cg.s32 [%0], %1;" :: "l"(barrier), "r"(bx));
-
+    set_barrier(barrier, bx);
 }
 
 template <int BLOCK_THREADS, typename scalar_t> 
