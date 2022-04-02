@@ -22,7 +22,7 @@ template <int BLOCK_THREADS, typename scalar_t>
 __device__  __forceinline__ scalar_t dot(scalar_t *a, scalar_t *b, uint length){
     typedef cub::BlockReduce<scalar_t, BLOCK_THREADS, cub::BLOCK_REDUCE_RAKING_COMMUTATIVE_ONLY> BlockReduce;
     __shared__ typename BlockReduce::TempStorage tmpStorage;
-    
+
     int tx = threadIdx.x;
     uint unroll = ceil( (float)length / (float)BLOCK_THREADS );
     uint idx = (tx & -32u)*unroll + (tx & 31);
@@ -33,9 +33,9 @@ __device__  __forceinline__ scalar_t dot(scalar_t *a, scalar_t *b, uint length){
         idx += 32;
     }
 
-    __shared__ scalar_t dot;
     scalar_t reduce = BlockReduce(tmpStorage).Sum(localProd);
 
+     __shared__ scalar_t dot;
     if (tx == 0) 
         dot = reduce;
     __syncthreads();
@@ -89,6 +89,8 @@ __global__  void QLoop(scalar_t *Q, scalar_t *vs, int n, int m){
 
         for (uint idx = tx; idx < vLen ; idx += BLOCK_THREADS)
             Q[bx * n + vIdx + idx] -= 2.0 * v[idx] * dotValue;
+
+        __syncthreads();
     }
 }
 
