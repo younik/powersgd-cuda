@@ -48,7 +48,7 @@ __global__ void reflections(scalar_t *R, scalar_t *vs, int m, int n, int *barrie
     int tx = threadIdx.x;
     int bx = blockIdx.x;
     scalar_t *v = &vs[bx * n + bx];
-    int vLen = n - bx;
+    uint vLen = n - bx;
 
     wait_barrier(&barriers[bx], bx);
 
@@ -95,7 +95,7 @@ __global__  void QLoop(scalar_t *Q, scalar_t *vs, int n, int m){
 }
 
 template <int BLOCK_THREADS, typename scalar_t> 
-void qrMain(torch::Tensor A, int m, int n, float epsilon){
+void qrMain(torch::Tensor A, torch::Tensor out, int m, int n, float epsilon){
     cudaStream_t stream = at::cuda::getCurrentCUDAStream();
 
     auto options = torch::TensorOptions().dtype(torch::kInt32).device(A.device());
@@ -106,24 +106,24 @@ void qrMain(torch::Tensor A, int m, int n, float epsilon){
     
     reflections<BLOCK_THREADS, scalar_t><<<m, BLOCK_THREADS, 0, stream>>>(A.data<scalar_t>(), vs.data<scalar_t>(), m, n, barriers.data<int>());
 
-    A.fill_(0);
-    A.fill_diagonal_(1);
-    QLoop<BLOCK_THREADS, scalar_t><<<m, BLOCK_THREADS, 0, stream>>>(A.data<scalar_t>(), vs.data<scalar_t>(), n, m);
+    out.fill_(0);
+    out.fill_diagonal_(1);
+    QLoop<BLOCK_THREADS, scalar_t><<<m, BLOCK_THREADS, 0, stream>>>(out.data<scalar_t>(), vs.data<scalar_t>(), n, m);
 }
 
 template <typename scalar_t> 
-void typedImplementation(torch::Tensor A, int m, int n, float epsilon){
+void typedImplementation(torch::Tensor A, torch::Tensor out, int m, int n, float epsilon){
     if (n < 512)
-        return qrMain<256, scalar_t>(A, m, n, epsilon);
+        return qrMain<256, scalar_t>(A, out, m, n, epsilon);
     else if (n < 1024)
-        return qrMain<512, scalar_t>(A, m, n, epsilon);
+        return qrMain<512, scalar_t>(A, out, m, n, epsilon);
     else
-        return qrMain<1024, scalar_t>(A, m, n, epsilon);
+        return qrMain<1024, scalar_t>(A, out, m, n, epsilon);
 }
 
-void qrOrthogonalizationCuda(torch::Tensor A, int m, int n, float epsilon){
+void qrOrthogonalizationCuda(torch::Tensor A, torch::Tensor out, int m, int n, float epsilon){
     AT_DISPATCH_FLOATING_TYPES_AND2(at::ScalarType::Half, at::ScalarType::BFloat16,
     A.scalar_type(), "qr_orthogonalization_cuda", ([&] {
-        typedImplementation<scalar_t>(A, m, n, epsilon);
+        typedImplementation<scalar_t>(A, out, m, n, epsilon);
     }));
 }
