@@ -4,12 +4,13 @@
 #define CHECK_CONTIGUOUS(x) TORCH_CHECK(x.is_contiguous(), #x " must be contiguous")
 #define CHECK_INPUT(x) CHECK_CUDA(x); CHECK_CONTIGUOUS(x)
 
-void qr_orthogonalization_cuda(torch::Tensor A, torch::Tensor Q, int m, int n, float epsilon);
+void qr_orthogonalization_cuda(torch::Tensor A, torch::Tensor Q, uint m, uint n, float epsilon);
 
 torch::Tensor qr_orthogonalization(torch::Tensor A, float epsilon, torch::Tensor Q){
     CHECK_INPUT(A);
-    const int m = A.size(0);
-    const int n = A.size(1);
+    TORCH_CHECK(A.size(1) <= std::numeric_limits<int32_t>::max(), "Input too big. Use torch.linalg.qr instead.");
+    const uint m = A.size(0);
+    const uint n = A.size(1);
 
     if (Q.size(0) == 0) {
       Q = torch::empty({m, n}, A.options());

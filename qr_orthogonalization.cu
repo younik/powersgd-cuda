@@ -44,7 +44,7 @@ __device__  __forceinline__ scalar_t dot(scalar_t *a, scalar_t *b, uint length){
 }
 
 template <int BLOCK_THREADS, typename scalar_t> 
-__global__ void reflections(scalar_t *R, scalar_t *vs, int m, int n, int *barriers){
+__global__ void reflections(scalar_t *R, scalar_t *vs, uint m, uint n, int *barriers){
     int tx = threadIdx.x;
     int bx = blockIdx.x;
     scalar_t *v = &vs[bx * n + bx];
@@ -77,7 +77,7 @@ __global__ void reflections(scalar_t *R, scalar_t *vs, int m, int n, int *barrie
 }
 
 template <int BLOCK_THREADS, typename scalar_t> 
-__global__  void q_loop(scalar_t *Q, scalar_t *vs, int n, int m){
+__global__  void q_loop(scalar_t *Q, scalar_t *vs, uint n, uint m){
     int tx = threadIdx.x;
     int bx = blockIdx.x;
 
@@ -95,7 +95,7 @@ __global__  void q_loop(scalar_t *Q, scalar_t *vs, int n, int m){
 }
 
 template <int BLOCK_THREADS, typename scalar_t> 
-void qr_main(torch::Tensor A, torch::Tensor Q, int m, int n, float epsilon){
+void qr_main(torch::Tensor A, torch::Tensor Q, uint m, uint n, float epsilon){
     cudaStream_t stream = at::cuda::getCurrentCUDAStream();
 
     auto options = torch::TensorOptions().dtype(torch::kInt32).device(A.device());
@@ -112,7 +112,7 @@ void qr_main(torch::Tensor A, torch::Tensor Q, int m, int n, float epsilon){
     q_loop<BLOCK_THREADS, scalar_t><<<m, BLOCK_THREADS, 0, stream>>>(Q.data<scalar_t>(), vs.data<scalar_t>(), n, m);
 }
 
-void qr_orthogonalization_cuda(torch::Tensor A, torch::Tensor Q, int m, int n, float epsilon){
+void qr_orthogonalization_cuda(torch::Tensor A, torch::Tensor Q, uint m, uint n, float epsilon){
     AT_DISPATCH_FLOATING_TYPES_AND2(at::ScalarType::Half, at::ScalarType::BFloat16,
     A.scalar_type(), "qr_orthogonalization_cuda", ([&] {
         if (n < 512)
