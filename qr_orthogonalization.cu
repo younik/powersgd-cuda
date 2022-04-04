@@ -102,9 +102,10 @@ void qrMain(torch::Tensor A, torch::Tensor out, int m, int n, float epsilon){
     torch::Tensor barriers = torch::zeros({m}, options);
     
     torch::Tensor vs = torch::zeros_like(A);
-    A.diagonal().add_((scalar_t) epsilon);
+    torch::Tensor R = A.clone();
+    R.diagonal().add_((scalar_t) epsilon);
     
-    reflections<BLOCK_THREADS, scalar_t><<<m, BLOCK_THREADS, 0, stream>>>(A.data<scalar_t>(), vs.data<scalar_t>(), m, n, barriers.data<int>());
+    reflections<BLOCK_THREADS, scalar_t><<<m, BLOCK_THREADS, 0, stream>>>(R.data<scalar_t>(), vs.data<scalar_t>(), m, n, barriers.data<int>());
 
     out.fill_(0);
     out.fill_diagonal_(1);
