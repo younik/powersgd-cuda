@@ -12,7 +12,7 @@ torch::Tensor qr_orthogonalization(torch::Tensor A, float epsilon, torch::Tensor
     const uint m = A.size(0);
     const uint n = A.size(1);
 
-    if (Q.size(0) == 0) {
+    if (Q.numel() == 0) {
       Q = torch::empty({m, n}, A.options());
     }
     CHECK_INPUT(Q);
