@@ -38,7 +38,7 @@ def test_orthogonal(M, algo, device):
     algo(Q, diag_eps=0)
 
     assert torch.eye(Q.shape[1], device=device, dtype=M.dtype).allclose(
-        Q.T @ Q, rtol=1e-03, atol=1e-04
+        Q.T @ Q, rtol=1e-03, atol=1e-03
     )
 
 
