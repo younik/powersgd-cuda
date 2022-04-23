@@ -34,7 +34,7 @@ def cuda_v1(M: torch.Tensor, diag_eps: float = 0):
     A = A.T.contiguous()
 
     Q = torch.empty_like(A)
-    _qr_func.qr_orthogonalization(A.clone(), Q, diag_eps)  # type: ignore
+    _qr_func.qr_orthogonalization(A, epsilon=diag_eps, out=Q)  # type: ignore
     M.data = Q.T
 
 
