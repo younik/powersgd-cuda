@@ -62,7 +62,15 @@ def test_not_worse_than_ref(M, algo, device):
 @pytest.mark.parametrize("algo", orthogonalization.implementations)
 def test_idempotence(algo, device):
     A = torch.eye(100, device=device)[:, :10]  # orthogonal matrix 
-    #A = torch.qr(torch.randn(100, 10, device=device)).Q
     Q = A.clone()
     algo(Q, diag_eps=0)
     assert Q.allclose(A) or Q.allclose(-A)
+
+
+@pytest.mark.parametrize("M", matrices)
+@pytest.mark.parametrize("algo", orthogonalization.implementations)
+def test_subspace(M, algo):
+    n_cols = M.shape[1]
+    M_ort = algo(M)
+    _, eigs, _ = torch.svd(torch.concat([M, M_ort], dim=1))
+    assert torch.all(eigs[n_cols:] < 1e-8)
